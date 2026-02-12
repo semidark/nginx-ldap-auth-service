@@ -27,6 +27,7 @@ from nginx_ldap_auth.settings import Settings
 
 from ..logging import get_logger
 from .forms import LoginForm
+from .header_auth import router as header_auth_router
 from .middleware import ExceptionLoggingMiddleware, SessionMiddleware
 from .models import User
 
@@ -144,6 +145,9 @@ app.add_middleware(
 # Outermost middleware that will log all exceptions not caught by other
 # middleware.
 app.add_middleware(ExceptionLoggingMiddleware)
+
+# Register header-based auth router (for Kerberos/SPNEGO support)
+app.include_router(header_auth_router)
 
 
 get_logger().info(

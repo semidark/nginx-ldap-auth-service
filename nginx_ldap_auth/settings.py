@@ -141,6 +141,19 @@ class Settings(BaseSettings):
     duo_skey: str | None = None
 
     # ==================
+    # Header-Based Auth (Kerberos/SPNEGO)
+    # ==================
+
+    #: The header name containing the trusted username from Kerberos/SPNEGO
+    #: authentication. This header is set by NGINX after successful Kerberos
+    #: authentication and contains the value of $remote_user.
+    ldap_trusted_user_header: str = "X-Ldap-User"
+    #: TTL for authorization cache entries in seconds. Set to 0 to disable
+    #: caching. The cache stores the result of LDAP group membership checks
+    #: to reduce load on the LDAP server.
+    header_auth_cache_ttl: int = 300
+
+    # ==================
     # Sentry
     # ==================
     #: The sentry DSN to use for error reporting.  If this is ``None``, no
