@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import RedisDsn, ValidationError, model_validator
+from pydantic import RedisDsn, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -144,6 +144,10 @@ class Settings(BaseSettings):
     # Header-Based Auth (Kerberos/SPNEGO)
     # ==================
 
+    #: Enable the /check-header endpoint for stateless header-based authorization.
+    #: When enabled, this endpoint trusts the username from a header set by NGINX
+    #: after Kerberos/SPNEGO authentication and performs LDAP group authorization.
+    header_auth_enabled: bool = True
     #: The header name containing the trusted username from Kerberos/SPNEGO
     #: authentication. This header is set by NGINX after successful Kerberos
     #: authentication and contains the value of $remote_user.
@@ -161,6 +165,15 @@ class Settings(BaseSettings):
     sentry_url: str | None = None
 
     model_config = SettingsConfigDict()
+
+    @field_validator("header_auth_cache_ttl")
+    @classmethod
+    def validate_cache_ttl(cls, v: int) -> int:
+        """Validate that header_auth_cache_ttl is non-negative."""
+        if v < 0:
+            msg = "header_auth_cache_ttl must be >= 0"
+            raise ValueError(msg)
+        return v
 
     @model_validator(mode="after")  #: type: ignore
     def redis_url_required_if_session_type_is_redis(self):

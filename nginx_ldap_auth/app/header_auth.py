@@ -27,7 +27,9 @@ settings = Settings()
 
 
 @router.get("/check-header")
-async def check_header_auth(request: Request, response: Response) -> dict[str, Any]:
+async def check_header_auth(  # noqa: PLR0911
+    request: Request, response: Response
+) -> dict[str, Any]:
     """
     Stateless authorization check for header-based authentication.
 
@@ -68,17 +70,18 @@ async def check_header_auth(request: Request, response: Response) -> dict[str, A
     # Use distributed lock to prevent thundering herd on LDAP
     async with authorization_lock(username, ldap_authorization_filter):
         # Check cache (inside lock to prevent duplicate LDAP queries)
-        cached_result = await get_cached_authorization(username, ldap_authorization_filter)
+        cached_result = await get_cached_authorization(
+            username, ldap_authorization_filter
+        )
 
         if cached_result is not None:
             if cached_result:
                 _logger.info("header_auth.check.success.cached", username=username)
                 response.headers["X-Auth-User"] = username
                 return {}
-            else:
-                _logger.info("header_auth.check.forbidden.cached", username=username)
-                response.status_code = status.HTTP_403_FORBIDDEN
-                return {}
+            _logger.info("header_auth.check.forbidden.cached", username=username)
+            response.status_code = status.HTTP_403_FORBIDDEN
+            return {}
 
         # Cache miss - query LDAP
         try:
@@ -91,18 +94,19 @@ async def check_header_auth(request: Request, response: Response) -> dict[str, A
             return {}
 
         # Cache the result
-        await set_cached_authorization(username, ldap_authorization_filter, is_authorized)
+        await set_cached_authorization(
+            username, ldap_authorization_filter, authorized=is_authorized
+        )
 
     # Return result (outside lock)
     if is_authorized:
         _logger.info("header_auth.check.success", username=username)
         response.headers["X-Auth-User"] = username
         return {}
-    else:
-        _logger.info(
-            "header_auth.check.forbidden",
-            username=username,
-            filter=ldap_authorization_filter,
-        )
-        response.status_code = status.HTTP_403_FORBIDDEN
-        return {}
+    _logger.info(
+        "header_auth.check.forbidden",
+        username=username,
+        filter=ldap_authorization_filter,
+    )
+    response.status_code = status.HTTP_403_FORBIDDEN
+    return {}

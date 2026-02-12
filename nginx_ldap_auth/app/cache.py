@@ -12,11 +12,13 @@ Includes per-key locking to prevent thundering herd / DOS on LDAP:
 import asyncio
 import hashlib
 import time
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from nginx_ldap_auth.logging import logger
 from nginx_ldap_auth.settings import Settings
+
+settings = Settings()
 
 # In-memory cache: key -> (authorized, expires_at)
 _cache: dict[str, tuple[bool, float]] = {}
@@ -39,9 +41,17 @@ def _make_cache_key(username: str, authorization_filter: str | None) -> str:
 
 
 def _get_redis_connection():
-    """Get Redis connection from the session store."""
-    from nginx_ldap_auth.app.main import store
+    """
+    Get Redis connection from the session store.
+
+    Note: This accesses the private ``_connection`` attribute of RedisStore
+    to reuse the existing Redis connection rather than creating a separate one.
+    This coupling is intentional to avoid managing a second Redis connection,
+    but may need updating if starsessions changes its internal implementation.
+    """
     from starsessions.stores.redis import RedisStore
+
+    from nginx_ldap_auth.app.main import store
 
     if isinstance(store, RedisStore):
         return store._connection
@@ -50,7 +60,6 @@ def _get_redis_connection():
 
 def _is_redis_backend() -> bool:
     """Check if Redis is the configured backend."""
-    settings = Settings()
     return settings.session_backend == "redis" and settings.redis_url is not None
 
 
@@ -94,15 +103,16 @@ async def get_cached_authorization(
 
     if _is_redis_backend():
         return await _redis_get(key)
-    else:
-        return _memory_get(key)
+    return _memory_get(key)
 
 
 async def set_cached_authorization(
-    username: str, authorization_filter: str | None, authorized: bool
+    username: str,
+    authorization_filter: str | None,
+    *,
+    authorized: bool,
 ) -> None:
     """Cache an authorization result."""
-    settings = Settings()
     if settings.header_auth_cache_ttl <= 0:
         return  # Caching disabled
 
@@ -141,7 +151,7 @@ def _memory_get(key: str) -> bool | None:
     return authorized
 
 
-def _memory_set(key: str, authorized: bool, ttl: int) -> None:
+def _memory_set(key: str, authorized: bool, ttl: int) -> None:  # noqa: FBT001
     _cache[key] = (authorized, time.time() + ttl)
     logger.debug("cache.set", key=key, authorized=authorized, ttl=ttl, backend="memory")
 
@@ -154,7 +164,6 @@ async def _redis_get(key: str) -> bool | None:
     if redis is None:
         return _memory_get(key)  # Fallback
 
-    settings = Settings()
     full_key = f"{settings.redis_prefix}{key}"
     value = await redis.get(full_key)
 
@@ -162,22 +171,23 @@ async def _redis_get(key: str) -> bool | None:
         logger.debug("cache.miss", key=full_key, backend="redis")
         return None
 
-    authorized = value == b"1" or value == "1"
+    authorized = value in {b"1", "1"}
     logger.debug("cache.hit", key=full_key, authorized=authorized, backend="redis")
     return authorized
 
 
-async def _redis_set(key: str, authorized: bool, ttl: int) -> None:
+async def _redis_set(key: str, authorized: bool, ttl: int) -> None:  # noqa: FBT001
     redis = _get_redis_connection()
     if redis is None:
         _memory_set(key, authorized, ttl)  # Fallback
         return
 
-    settings = Settings()
     full_key = f"{settings.redis_prefix}{key}"
     value = "1" if authorized else "0"
     await redis.setex(full_key, ttl, value)
-    logger.debug("cache.set", key=full_key, authorized=authorized, ttl=ttl, backend="redis")
+    logger.debug(
+        "cache.set", key=full_key, authorized=authorized, ttl=ttl, backend="redis"
+    )
 
 
 @asynccontextmanager
@@ -195,7 +205,6 @@ async def _redis_lock(key: str) -> AsyncGenerator[None, None]:
             yield
         return
 
-    settings = Settings()
     lock_key = f"{settings.redis_prefix}lock:{key}"
     acquired = False
     retry_delay = 0.01  # Start with 10ms
@@ -236,6 +245,6 @@ async def _redis_lock(key: str) -> AsyncGenerator[None, None]:
 
 def reset_cache() -> None:
     """Reset cache state (for testing)."""
-    global _cache, _key_locks
+    global _cache, _key_locks  # noqa: PLW0603
     _cache = {}
     _key_locks = {}

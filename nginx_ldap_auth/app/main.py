@@ -147,7 +147,8 @@ app.add_middleware(
 app.add_middleware(ExceptionLoggingMiddleware)
 
 # Register header-based auth router (for Kerberos/SPNEGO support)
-app.include_router(header_auth_router)
+if settings.header_auth_enabled:
+    app.include_router(header_auth_router)
 
 
 get_logger().info(

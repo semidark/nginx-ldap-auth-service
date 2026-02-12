@@ -9,6 +9,16 @@ import pytest
 from bonsai import LDAPError
 
 
+@pytest.fixture(autouse=True)
+def reset_auth_cache():
+    """Reset the authorization cache before and after each test."""
+    from nginx_ldap_auth.app.cache import reset_cache
+
+    reset_cache()
+    yield
+    reset_cache()
+
+
 class TestCheckHeaderEndpoint:
     """Tests for the /check-header endpoint."""
 
@@ -20,7 +30,9 @@ class TestCheckHeaderEndpoint:
             "/check-header",
             headers={
                 "x-ldap-user": "testuser",
-                "x-authorization-filter": "(&(uid={username})(memberOf=cn=admins,dc=example,dc=com))",
+                "x-authorization-filter": (
+                    "(&(uid={username})(memberOf=cn=admins,dc=example,dc=com))"
+                ),
             },
         )
 
@@ -28,7 +40,7 @@ class TestCheckHeaderEndpoint:
         assert response.headers.get("x-auth-user") == "testuser"
         assert response.headers.get("cache-control") == "no-cache"
 
-    def test_check_header_missing_header(self, client, mock_user_manager):
+    def test_check_header_missing_header(self, client, mock_user_manager):  # noqa: ARG002
         """Test that missing X-Ldap-User header returns 401."""
         response = client.get("/check-header")
 
@@ -44,7 +56,9 @@ class TestCheckHeaderEndpoint:
             "/check-header",
             headers={
                 "x-ldap-user": "testuser",
-                "x-authorization-filter": "(&(uid={username})(memberOf=cn=admins,dc=example,dc=com))",
+                "x-authorization-filter": (
+                    "(&(uid={username})(memberOf=cn=admins,dc=example,dc=com))"
+                ),
             },
         )
 
@@ -52,7 +66,7 @@ class TestCheckHeaderEndpoint:
         assert "x-auth-user" not in response.headers
 
     def test_check_header_no_filter(self, client, mock_user_manager):
-        """Test that when no authorization filter is provided, all users are authorized."""
+        """Test that with no authorization filter, all users are authorized."""
         response = client.get(
             "/check-header",
             headers={"x-ldap-user": "testuser"},
@@ -70,7 +84,9 @@ class TestCheckHeaderEndpoint:
             "/check-header",
             headers={
                 "x-ldap-user": "testuser",
-                "x-authorization-filter": "(&(uid={username})(memberOf=cn=admins,dc=example,dc=com))",
+                "x-authorization-filter": (
+                    "(&(uid={username})(memberOf=cn=admins,dc=example,dc=com))"
+                ),
             },
         )
 
@@ -78,14 +94,13 @@ class TestCheckHeaderEndpoint:
 
     def test_check_header_cache_hit(self, client, mock_user_manager):
         """Test that cached results are used (LDAP not queried on second request)."""
-        from nginx_ldap_auth.app.cache import reset_cache
-
-        reset_cache()
         mock_user_manager.is_authorized.return_value = True
 
         headers = {
             "x-ldap-user": "cacheuser",
-            "x-authorization-filter": "(&(uid={username})(memberOf=cn=testers,dc=example,dc=com))",
+            "x-authorization-filter": (
+                "(&(uid={username})(memberOf=cn=testers,dc=example,dc=com))"
+            ),
         }
 
         # First request - should query LDAP
@@ -98,13 +113,8 @@ class TestCheckHeaderEndpoint:
         assert response2.status_code == 200
         assert mock_user_manager.is_authorized.call_count == 1  # Still 1 (cache hit)
 
-        reset_cache()
-
     def test_check_header_cache_different_filters(self, client, mock_user_manager):
-        """Test that different authorization filters result in different cache entries."""
-        from nginx_ldap_auth.app.cache import reset_cache
-
-        reset_cache()
+        """Test that different filters result in different cache entries."""
         mock_user_manager.is_authorized.return_value = True
 
         # Request with filter A
@@ -129,9 +139,7 @@ class TestCheckHeaderEndpoint:
         assert response2.status_code == 200
         assert mock_user_manager.is_authorized.call_count == 2
 
-        reset_cache()
-
-    def test_check_header_custom_header_name(self, client, mock_user_manager, mocker):
+    def test_check_header_custom_header_name(self, client, mock_user_manager, mocker):  # noqa: ARG002
         """Test that custom header name from settings works."""
         from nginx_ldap_auth.app import header_auth
 
@@ -148,11 +156,8 @@ class TestCheckHeaderEndpoint:
         assert response.headers.get("x-auth-user") == "customuser"
 
     def test_check_header_uses_settings_filter(self, client, mock_user_manager, mocker):
-        """Test that settings.ldap_authorization_filter is used when header not provided."""
+        """Test that settings.ldap_authorization_filter is used when no header."""
         from nginx_ldap_auth.app import header_auth
-        from nginx_ldap_auth.app.cache import reset_cache
-
-        reset_cache()
 
         mocker.patch.object(
             header_auth.settings,
@@ -171,8 +176,6 @@ class TestCheckHeaderEndpoint:
         call_args = mock_user_manager.is_authorized.call_args
         assert "memberOf=cn=default" in call_args[0][1]
 
-        reset_cache()
-
 
 class TestAuthCache:
     """Tests for the authorization cache module."""
@@ -182,18 +185,15 @@ class TestAuthCache:
         """Test cache get/set operations."""
         from nginx_ldap_auth.app.cache import (
             get_cached_authorization,
-            reset_cache,
             set_cached_authorization,
         )
-
-        reset_cache()
 
         # Initially empty
         result = await get_cached_authorization("user1", "(filter1)")
         assert result is None
 
         # Set and get
-        await set_cached_authorization("user1", "(filter1)", True)
+        await set_cached_authorization("user1", "(filter1)", authorized=True)
         result = await get_cached_authorization("user1", "(filter1)")
         assert result is True
 
@@ -202,20 +202,16 @@ class TestAuthCache:
         assert result is None
 
         # Set unauthorized
-        await set_cached_authorization("user2", "(filter1)", False)
+        await set_cached_authorization("user2", "(filter1)", authorized=False)
         result = await get_cached_authorization("user2", "(filter1)")
         assert result is False
-
-        reset_cache()
 
     @pytest.mark.asyncio
     async def test_authorization_lock_prevents_concurrent_access(self):
         """Test that authorization_lock serializes access for same key."""
         import asyncio
 
-        from nginx_ldap_auth.app.cache import authorization_lock, reset_cache
-
-        reset_cache()
+        from nginx_ldap_auth.app.cache import authorization_lock
 
         execution_order = []
 
@@ -238,16 +234,12 @@ class TestAuthCache:
         assert execution_order[2].endswith("_start")
         assert execution_order[3].endswith("_end")
 
-        reset_cache()
-
     @pytest.mark.asyncio
     async def test_authorization_lock_different_keys_concurrent(self):
         """Test that different keys can be accessed concurrently."""
         import asyncio
 
-        from nginx_ldap_auth.app.cache import authorization_lock, reset_cache
-
-        reset_cache()
+        from nginx_ldap_auth.app.cache import authorization_lock
 
         execution_order = []
 
@@ -272,5 +264,3 @@ class TestAuthCache:
         first_end_idx = execution_order.index(ends[0])
         assert execution_order.index(starts[0]) < first_end_idx
         assert execution_order.index(starts[1]) < first_end_idx
-
-        reset_cache()
