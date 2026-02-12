@@ -12,7 +12,7 @@ from bonsai import LDAPError
 @pytest.fixture(autouse=True)
 def reset_auth_cache():
     """Reset the authorization cache before and after each test."""
-    from nginx_ldap_auth.app.cache import reset_cache
+    from nginx_ldap_auth.app.header_auth_cache import reset_cache
 
     reset_cache()
     yield
@@ -183,7 +183,7 @@ class TestAuthCache:
     @pytest.mark.asyncio
     async def test_cache_get_set(self):
         """Test cache get/set operations."""
-        from nginx_ldap_auth.app.cache import (
+        from nginx_ldap_auth.app.header_auth_cache import (
             get_cached_authorization,
             set_cached_authorization,
         )
@@ -211,7 +211,7 @@ class TestAuthCache:
         """Test that authorization_lock serializes access for same key."""
         import asyncio
 
-        from nginx_ldap_auth.app.cache import authorization_lock
+        from nginx_ldap_auth.app.header_auth_cache import authorization_lock
 
         execution_order = []
 
@@ -239,7 +239,7 @@ class TestAuthCache:
         """Test that different keys can be accessed concurrently."""
         import asyncio
 
-        from nginx_ldap_auth.app.cache import authorization_lock
+        from nginx_ldap_auth.app.header_auth_cache import authorization_lock
 
         execution_order = []
 
@@ -268,8 +268,8 @@ class TestAuthCache:
     @pytest.mark.asyncio
     async def test_lock_lru_cleanup(self, mocker):
         """Test that locks are pruned when exceeding max limit."""
-        from nginx_ldap_auth.app import cache
-        from nginx_ldap_auth.app.cache import (
+        from nginx_ldap_auth.app import header_auth_cache
+        from nginx_ldap_auth.app.header_auth_cache import (
             authorization_lock,
             get_lock_count,
             reset_cache,
@@ -278,7 +278,7 @@ class TestAuthCache:
         reset_cache()
 
         # Set a very low max to trigger cleanup easily
-        mocker.patch.object(cache, "_MAX_LOCKS", 5)
+        mocker.patch.object(header_auth_cache, "_MAX_LOCKS", 5)
 
         # Create 6 locks (exceeds limit of 5)
         for i in range(6):
@@ -293,13 +293,16 @@ class TestAuthCache:
         """Test that currently held locks are not pruned."""
         import asyncio
 
-        from nginx_ldap_auth.app import cache
-        from nginx_ldap_auth.app.cache import authorization_lock, reset_cache
+        from nginx_ldap_auth.app import header_auth_cache
+        from nginx_ldap_auth.app.header_auth_cache import (
+            authorization_lock,
+            reset_cache,
+        )
 
         reset_cache()
 
         # Set a very low max to trigger cleanup
-        mocker.patch.object(cache, "_MAX_LOCKS", 3)
+        mocker.patch.object(header_auth_cache, "_MAX_LOCKS", 3)
 
         release_event = asyncio.Event()
 

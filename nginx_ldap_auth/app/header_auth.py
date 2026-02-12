@@ -14,7 +14,7 @@ from fastapi import APIRouter, Request, Response, status
 from nginx_ldap_auth.settings import Settings
 
 from ..logging import get_logger
-from .cache import (
+from .header_auth_cache import (
     authorization_lock,
     get_cached_authorization,
     set_cached_authorization,
