@@ -57,9 +57,12 @@ async def check_header_auth(  # noqa: PLR0911
         return {}
 
     # Get authorization filter from header or settings
-    ldap_authorization_filter: str | None = request.headers.get(
-        "x-authorization-filter", settings.ldap_authorization_filter
-    )
+    if settings.allow_authorization_filter_header:
+        ldap_authorization_filter: str | None = request.headers.get(
+            "x-authorization-filter", settings.ldap_authorization_filter
+        )
+    else:
+        ldap_authorization_filter = settings.ldap_authorization_filter
 
     # No filter means all authenticated users are authorized
     if ldap_authorization_filter is None:

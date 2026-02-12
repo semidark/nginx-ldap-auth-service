@@ -94,7 +94,8 @@ def mock_settings(mocker):
     mocker.patch.object(app_settings, "auth_realm", "Restricted")
     mocker.patch.object(app_settings, "allow_authorization_filter_header", value=True)
 
-    # Patch forms.py settings to use the same object
+    # Patch forms.py and header_auth.py settings to use the same object
     mocker.patch("nginx_ldap_auth.app.forms.settings", app_settings)
+    mocker.patch("nginx_ldap_auth.app.header_auth.settings", app_settings)
 
     return app_settings

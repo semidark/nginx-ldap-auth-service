@@ -176,6 +176,33 @@ class TestCheckHeaderEndpoint:
         call_args = mock_user_manager.is_authorized.call_args
         assert "memberOf=cn=default" in call_args[0][1]
 
+    def test_check_header_filter_header_ignored_when_disabled(
+        self, client, mock_user_manager, mock_settings
+    ):
+        """Test that X-Authorization-Filter header is ignored when setting is False."""
+        # Disable header override using the shared mock_settings fixture
+        mock_settings.allow_authorization_filter_header = False
+        mock_settings.ldap_authorization_filter = (
+            "(memberOf=cn=allowed,dc=example,dc=com)"
+        )
+        mock_user_manager.is_authorized.return_value = True
+
+        # Send request with malicious filter header (should be ignored)
+        response = client.get(
+            "/check-header",
+            headers={
+                "x-ldap-user": "testuser",
+                "x-authorization-filter": "(objectClass=*)",  # Malicious filter
+            },
+        )
+
+        assert response.status_code == 200
+        # Verify is_authorized was called with the setting filter, not the header
+        mock_user_manager.is_authorized.assert_called_once()
+        call_args = mock_user_manager.is_authorized.call_args
+        assert call_args[0][1] == "(memberOf=cn=allowed,dc=example,dc=com)"
+        assert "(objectClass=*)" not in str(call_args)
+
 
 class TestAuthCache:
     """Tests for the authorization cache module."""
