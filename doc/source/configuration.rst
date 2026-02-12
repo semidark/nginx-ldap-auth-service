@@ -565,3 +565,53 @@ These settings configure the LDAP server to use for authentication.
 
     The maximum number of seconds to keep a connection in the LDAP connection pool.
     Defaults to ``20``.
+
+
+.. _header_auth_config:
+
+Header-Based Authentication (Kerberos/SPNEGO)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+These settings configure the stateless header-based authorization endpoint
+(``/check-header``) for use with Kerberos/SPNEGO authentication. See
+:ref:`kerberos_spnego` for NGINX configuration examples.
+
+.. envvar:: HEADER_AUTH_ENABLED
+
+    Set to ``True`` to enable the ``/check-header`` endpoint for header-based
+    authorization. Defaults to ``True``.
+
+    When enabled, the ``/check-header`` endpoint accepts a username from a trusted
+    header (set by NGINX after Kerberos authentication) and performs LDAP group
+    authorization without requiring a session.
+
+.. envvar:: LDAP_TRUSTED_USER_HEADER
+
+    The name of the HTTP header containing the authenticated username from
+    Kerberos/SPNEGO. This header should be set by NGINX from ``$remote_user``
+    after successful Kerberos authentication.
+
+    Defaults to ``X-Ldap-User``.
+
+    .. important::
+
+        This header is trusted implicitly. Your NGINX configuration must
+        ensure that clients cannot spoof this header. Use
+        ``proxy_pass_request_headers off`` and explicitly set only the headers
+        you need.
+
+.. envvar:: HEADER_AUTH_CACHE_TTL
+
+    The time-to-live (in seconds) for cached authorization results. The cache
+    stores whether a user is authorized for a specific LDAP filter to reduce
+    load on the LDAP server.
+
+    Defaults to ``300`` (5 minutes).
+
+    Set to ``0`` to disable caching entirely (not recommended for production).
+
+    .. note::
+
+        Changes to LDAP group membership will not take effect until the cache
+        entry expires. For environments requiring immediate membership updates,
+        consider a shorter TTL or deploy an admin endpoint to clear the cache.

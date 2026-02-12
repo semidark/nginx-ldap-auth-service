@@ -23,9 +23,13 @@ settings = Settings()
 # In-memory cache: key -> (authorized, expires_at)
 _cache: dict[str, tuple[bool, float]] = {}
 
-# Per-key locks for in-memory backend
-_key_locks: dict[str, asyncio.Lock] = {}
+# Per-key locks for in-memory backend with LRU tracking
+# Stores: key -> (lock, last_access_time)
+_key_locks: dict[str, tuple[asyncio.Lock, float]] = {}
 _key_locks_lock = asyncio.Lock()
+
+# Maximum number of locks to keep in memory (prevents unbounded growth)
+_MAX_LOCKS = 10_000
 
 # Distributed lock TTL (seconds) - should be longer than typical LDAP query time
 _REDIS_LOCK_TTL = 10
@@ -128,11 +132,61 @@ async def set_cached_authorization(
 
 
 async def _get_memory_lock(key: str) -> asyncio.Lock:
-    """Get or create a lock for a specific cache key."""
+    """
+    Get or create a lock for a specific cache key.
+
+    Implements LRU-based cleanup: when the number of locks exceeds _MAX_LOCKS,
+    the oldest unused locks are pruned to prevent unbounded memory growth.
+    """
     async with _key_locks_lock:
-        if key not in _key_locks:
-            _key_locks[key] = asyncio.Lock()
-        return _key_locks[key]
+        current_time = time.time()
+
+        if key in _key_locks:
+            # Update access time and return existing lock
+            lock, _ = _key_locks[key]
+            _key_locks[key] = (lock, current_time)
+            return lock
+
+        # Create new lock
+        lock = asyncio.Lock()
+        _key_locks[key] = (lock, current_time)
+
+        # Prune oldest locks if we exceed the limit
+        if len(_key_locks) > _MAX_LOCKS:
+            _prune_oldest_locks()
+
+        return lock
+
+
+def _prune_oldest_locks() -> None:
+    """
+    Remove the oldest 10% of locks based on last access time.
+
+    This is called under _key_locks_lock, so no additional locking needed.
+    Only prunes locks that are not currently held (locked).
+    """
+    # Calculate how many to remove (10% of max, minimum 1)
+    num_to_remove = max(1, _MAX_LOCKS // 10)
+
+    # Sort by last access time (oldest first), filter out currently held locks
+    candidates = [
+        (k, access_time)
+        for k, (lock, access_time) in _key_locks.items()
+        if not lock.locked()
+    ]
+    candidates.sort(key=lambda x: x[1])
+
+    # Remove oldest candidates
+    removed = 0
+    for key, _ in candidates:
+        if removed >= num_to_remove:
+            break
+        if key in _key_locks and not _key_locks[key][0].locked():
+            del _key_locks[key]
+            removed += 1
+
+    if removed > 0:
+        logger.debug("cache.locks.pruned", count=removed, remaining=len(_key_locks))
 
 
 def _memory_get(key: str) -> bool | None:
@@ -248,3 +302,8 @@ def reset_cache() -> None:
     global _cache, _key_locks  # noqa: PLW0603
     _cache = {}
     _key_locks = {}
+
+
+def get_lock_count() -> int:
+    """Return the current number of locks (for monitoring/testing)."""
+    return len(_key_locks)

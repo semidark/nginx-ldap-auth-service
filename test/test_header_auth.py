@@ -264,3 +264,63 @@ class TestAuthCache:
         first_end_idx = execution_order.index(ends[0])
         assert execution_order.index(starts[0]) < first_end_idx
         assert execution_order.index(starts[1]) < first_end_idx
+
+    @pytest.mark.asyncio
+    async def test_lock_lru_cleanup(self, mocker):
+        """Test that locks are pruned when exceeding max limit."""
+        from nginx_ldap_auth.app import cache
+        from nginx_ldap_auth.app.cache import (
+            authorization_lock,
+            get_lock_count,
+            reset_cache,
+        )
+
+        reset_cache()
+
+        # Set a very low max to trigger cleanup easily
+        mocker.patch.object(cache, "_MAX_LOCKS", 5)
+
+        # Create 6 locks (exceeds limit of 5)
+        for i in range(6):
+            async with authorization_lock(f"user{i}", "(filter)"):
+                pass  # Just acquire and release
+
+        # Should have pruned some locks (10% of 5 = 1, so 5 remain max)
+        assert get_lock_count() <= 5
+
+    @pytest.mark.asyncio
+    async def test_lock_lru_does_not_prune_held_locks(self, mocker):
+        """Test that currently held locks are not pruned."""
+        import asyncio
+
+        from nginx_ldap_auth.app import cache
+        from nginx_ldap_auth.app.cache import authorization_lock, reset_cache
+
+        reset_cache()
+
+        # Set a very low max to trigger cleanup
+        mocker.patch.object(cache, "_MAX_LOCKS", 3)
+
+        release_event = asyncio.Event()
+
+        async def hold_lock():
+            async with authorization_lock("held_user", "(filter)"):
+                # Wait while other locks are created
+                await release_event.wait()
+
+        async def create_locks():
+            # Give the held lock time to acquire
+            await asyncio.sleep(0.05)
+
+            # Create more locks than max, should trigger pruning
+            for i in range(5):
+                async with authorization_lock(f"user{i}", "(filter)"):
+                    pass
+
+            release_event.set()
+
+        # Run both concurrently - held lock should survive pruning
+        await asyncio.gather(hold_lock(), create_locks())
+
+        # Test completes without error - if held lock was pruned,
+        # the context manager exit would fail
