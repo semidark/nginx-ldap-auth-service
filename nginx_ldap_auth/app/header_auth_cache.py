@@ -278,7 +278,13 @@ async def _redis_lock(key: str) -> AsyncGenerator[None, None]:
 
             # Check if we've waited too long
             if time.time() - start_time > max_wait:
-                # Give up waiting, proceed without lock (better than blocking forever)
+                # Give up waiting and proceed without lock
+                #
+                # Trade-off: Availability over consistency
+                # - PRO: Prevents indefinite blocking during Redis issues
+                # - PRO: Service stays available under high contention
+                # - CON: May cause duplicate LDAP queries (thundering herd)
+                # - SAFETY: Fail-safe - more restrictive auth result wins via cache expiration
                 logger.warning("cache.lock.timeout", key=lock_key)
                 break
 
