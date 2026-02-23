@@ -94,6 +94,12 @@ test/
 
 ## Code Style Guidelines
 
+### Packaging and Environment
+
+- Use `uv` for package management as defined in `pyproject.toml`.
+- Use `uv sync --dev` to create the virtual environment and install dev deps.
+- Activate the virtual environment before running Python commands: `source .venv/bin/activate`.
+
 ### Formatting (enforced by Ruff)
 
 - **Line length:** 88 characters
@@ -129,11 +135,20 @@ from .models import User
 
 ### Type Hints
 
-- Use type hints on all function signatures
-- Use `Annotated` with `Depends()` for FastAPI dependency injection
-- Use `TypeAlias` for custom type definitions
-- Use `Literal` for constrained string values
-- Use `ClassVar` for class-level attributes
+- Use type hints on all function signatures (Python 3.10+ typing).
+- Prefer built-in collection types (`list`, `dict`, `tuple`) over `List`, `Dict`.
+- Be specific for collection types (e.g., `dict[str, LDAPValue]`).
+- Use `Annotated` with `Depends()` for FastAPI dependency injection.
+- Use `TypeAlias` for custom type definitions in `nginx_ldap_auth/types.py`.
+- Use `Literal` for constrained string values.
+- Use `ClassVar` for class-level attributes.
+
+### Structure and Complexity
+
+- Keep functions/methods under ~60 lines; split if longer.
+- Use `@dataclass`, Pydantic models, or `TypedDict` instead of plain dicts.
+  - User-facing data models: Pydantic.
+  - Internal-only data models: `@dataclass` or `TypedDict`.
 
 ### Async Patterns
 
@@ -143,11 +158,12 @@ from .models import User
 
 ### Error Handling
 
-- Define custom exceptions in `exc.py`
-- Use specific exception types, not bare `except:`
-- Log exceptions with `logger.exception()` for stack traces
-- Use `HTTPException` for HTTP errors
-- Return `False` for authentication failures rather than raising
+- Define custom exceptions in `exc.py`.
+- Use specific exception types, not bare `except:`.
+- Allow unexpected `Exception` types to propagate rather than catching all.
+- Log exceptions with `logger.exception()` for stack traces.
+- Use `HTTPException` for HTTP errors.
+- Return `False` for authentication failures rather than raising.
 
 ### Logging
 
@@ -163,8 +179,11 @@ logger.info("auth.login.success", username=username, realm=realm)
 
 ### Documentation
 
-- Use reStructuredText format for docstrings
-- Include `:param:`, `:returns:`, `:raises:` sections
+- Use reStructuredText format for docstrings.
+- Include `:param:`, `:returns:`, `:raises:` sections.
+- For Napoleon-style docstrings, include `Args`, `Keyword Arguments`, `Raises`,
+  and `Returns` sections, with a blank line after `Returns`.
+- Document class attributes inline using `#:` comments above each attribute.
 
 ```python
 def authenticate(username: str, password: str) -> bool:
@@ -179,10 +198,48 @@ def authenticate(username: str, password: str) -> bool:
 
 ## Testing
 
-- Tests are in `test/` directory using pytest
-- Use `pytest-asyncio` for async tests (`@pytest.mark.asyncio`)
-- Use `pytest-mock` for mocking (via `mocker` fixture)
-- Common fixtures in `conftest.py`: `client`, `mock_user_manager`, `mock_settings`
+- Tests are in `test/` directory using pytest.
+- Use `pytest-asyncio` for async tests (`@pytest.mark.asyncio`).
+- Use `pytest-mock` for mocking (via `mocker` fixture).
+- Common fixtures in `conftest.py`: `client`, `mock_user_manager`, `mock_settings`.
+
+### Test Categories and Markers
+
+- **Unit tests**: `@pytest.mark.unit`
+- **Integration tests**: `@pytest.mark.integration`
+- **CLI tests**: `@pytest.mark.cli`
+- **Model tests**: `@pytest.mark.model`
+- **Service tests**: `@pytest.mark.service`
+
+### Naming and Organization
+
+- Test files: `test_<module>.py` under `test/`.
+- Test classes: `Test<ClassName>` when grouping is helpful.
+- Test functions: `test_<description>`.
+
+### Fixtures
+
+- Define local fixtures in the test module when they are single-use.
+- Define shared fixtures in `test/conftest.py`.
+
+### Mocking Guidance
+
+- Mock external dependencies only (LDAP servers, Redis, HTTP APIs, etc.).
+- Avoid mocking internal code paths; test real logic when possible.
+
+### Integration Tests
+
+- Use environment variables for real backends/configuration.
+- Skip integration tests if required environment variables are missing.
+- Warn users before running destructive integration tests.
+
+### Running Tests
+
+- Install test deps: `uv sync --group test`.
+- Run all tests: `pytest test/`.
+- Run a single test file: `pytest test/test_auth_flow.py`.
+- Run a single test: `pytest test/test_auth_flow.py::test_login_success`.
+- Run with markers: `pytest -m "unit"` (or `integration`, `cli`, etc.).
 
 ## Key Dependencies
 
