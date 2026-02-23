@@ -50,6 +50,7 @@ async def check_header_auth(  # noqa: PLR0911
     # Get username from trusted header
     header_name = settings.ldap_trusted_user_header
     username = request.headers.get(header_name.lower())
+    is_authorized = False
 
     if not username:
         _logger.warning("header_auth.check.missing_header", header=header_name)

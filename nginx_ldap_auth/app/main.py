@@ -47,6 +47,7 @@ DUO_AUTH_PATHS: Final[set[str]] = {
     "/auth/duo",
     "/status",
     "/check",
+    "/check-header",
 }
 
 # --------------------------------------
@@ -123,6 +124,10 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     """
     # Startup: Create the LDAP connection pool
     await User.objects.create_pool()
+    if settings.header_auth_enabled:
+        from .header_auth_cache import ensure_redis_connection
+
+        ensure_redis_connection()
     yield
     # Shutdown: Close the LDAP connection pool
     await User.objects.cleanup()

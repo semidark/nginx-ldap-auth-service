@@ -19,6 +19,9 @@ from nginx_ldap_auth.logging import logger
 from nginx_ldap_auth.settings import Settings
 
 settings = Settings()
+_USE_REDIS_BACKEND = (
+    settings.session_backend == "redis" and settings.redis_url is not None
+)
 
 # In-memory cache: key -> (authorized, expires_at)
 _cache: dict[str, tuple[bool, float]] = {}
@@ -36,7 +39,12 @@ _REDIS_LOCK_TTL = 10
 
 
 def _make_cache_key(username: str, authorization_filter: str | None) -> str:
-    """Generate cache key from username and filter hash."""
+    """Generate cache key from username and filter hash.
+
+    :param username: Username used for the cache key.
+    :param authorization_filter: LDAP authorization filter to hash, if present.
+    :returns: Cache key for the username and filter combination.
+    """
     if authorization_filter is None:
         filter_hash = "none"
     else:
@@ -52,19 +60,40 @@ def _get_redis_connection():
     to reuse the existing Redis connection rather than creating a separate one.
     This coupling is intentional to avoid managing a second Redis connection,
     but may need updating if starsessions changes its internal implementation.
+
+    :returns: Redis connection instance if available, otherwise ``None``.
     """
+    if not _USE_REDIS_BACKEND:
+        return None
+
     from starsessions.stores.redis import RedisStore
 
     from nginx_ldap_auth.app.main import store
 
-    if isinstance(store, RedisStore):
-        return store._connection
-    return None
+    if not isinstance(store, RedisStore):
+        logger.error(
+            "cache.redis.backend_mismatch",
+            backend=type(store).__name__,
+        )
+        return None
+
+    connection = store._connection
+    if connection is None:
+        logger.error("cache.redis.connection_missing")
+    return connection
 
 
-def _is_redis_backend() -> bool:
-    """Check if Redis is the configured backend."""
-    return settings.session_backend == "redis" and settings.redis_url is not None
+def ensure_redis_connection() -> None:
+    """Ensure Redis connection is available when configured.
+
+    :raises RuntimeError: Redis backend configured but connection unavailable.
+    """
+    if not _USE_REDIS_BACKEND:
+        return
+    if _get_redis_connection() is None:
+        msg = "Redis backend configured but connection unavailable"
+        logger.error("cache.redis.connection_unavailable")
+        raise RuntimeError(msg)
 
 
 # --- Public API ---
@@ -87,7 +116,7 @@ async def authorization_lock(
     """
     key = _make_cache_key(username, authorization_filter)
 
-    if _is_redis_backend():
+    if _USE_REDIS_BACKEND:
         async with _redis_lock(key):
             yield
     else:
@@ -105,7 +134,7 @@ async def get_cached_authorization(
     """
     key = _make_cache_key(username, authorization_filter)
 
-    if _is_redis_backend():
+    if _USE_REDIS_BACKEND:
         return await _redis_get(key)
     return _memory_get(key)
 
@@ -122,7 +151,7 @@ async def set_cached_authorization(
 
     key = _make_cache_key(username, authorization_filter)
 
-    if _is_redis_backend():
+    if _USE_REDIS_BACKEND:
         await _redis_set(key, authorized, settings.header_auth_cache_ttl)
     else:
         _memory_set(key, authorized, settings.header_auth_cache_ttl)
@@ -182,6 +211,7 @@ def _prune_oldest_locks() -> None:
         if removed >= num_to_remove:
             break
         if key in _key_locks and not _key_locks[key][0].locked():
+            # Re-check lock state in case it was acquired after the snapshot.
             del _key_locks[key]
             removed += 1
 
@@ -214,9 +244,15 @@ def _memory_set(key: str, authorized: bool, ttl: int) -> None:  # noqa: FBT001
 
 
 async def _redis_get(key: str) -> bool | None:
+    """Get cached authorization result from Redis.
+
+    :param key: Cache key to retrieve.
+    :returns: Cached authorization result or ``None``.
+    """
     redis = _get_redis_connection()
     if redis is None:
-        return _memory_get(key)  # Fallback
+        logger.error("cache.redis.unavailable", action="get", key=key)
+        return _memory_get(key)
 
     full_key = f"{settings.redis_prefix}{key}"
     value = await redis.get(full_key)
@@ -231,9 +267,16 @@ async def _redis_get(key: str) -> bool | None:
 
 
 async def _redis_set(key: str, authorized: bool, ttl: int) -> None:  # noqa: FBT001
+    """Set cached authorization result in Redis.
+
+    :param key: Cache key to set.
+    :param authorized: Authorization result to cache.
+    :param ttl: Cache time-to-live in seconds.
+    """
     redis = _get_redis_connection()
     if redis is None:
-        _memory_set(key, authorized, ttl)  # Fallback
+        logger.error("cache.redis.unavailable", action="set", key=key)
+        _memory_set(key, authorized, ttl)
         return
 
     full_key = f"{settings.redis_prefix}{key}"
@@ -251,9 +294,12 @@ async def _redis_lock(key: str) -> AsyncGenerator[None, None]:
 
     Acquires a lock that works across all workers/processes.
     If lock cannot be acquired, waits and retries with exponential backoff.
+
+    :param key: Cache key to lock.
     """
     redis = _get_redis_connection()
     if redis is None:
+        logger.error("cache.redis.unavailable", action="lock", key=key)
         # Fallback to memory lock if Redis unavailable
         async with await _get_memory_lock(key):
             yield
