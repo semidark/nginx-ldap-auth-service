@@ -9,6 +9,12 @@ This document provides essential information for AI agents working in this codeb
 - **Package Manager:** uv (with pip/docker alternatives)
 - **Purpose:** LDAP authentication service for nginx using `ngx_http_auth_request_module`
 
+## Upstream Divergence Guidance
+
+- Keep Kerberos/LDAP changes narrowly scoped to the Kerberos/LDAP code paths.
+- Isolate edits to Kerberos/LDAP-specific files and logic; avoid unnecessary changes elsewhere.
+- Regularly check the upstream main branch to stay aligned and keep merges frictionless.
+
 ## Build, Lint, and Test Commands
 
 ### Testing
